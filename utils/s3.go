@@ -18,13 +18,12 @@ import (
 
 var client *s3.Client
 
-func getS3LogList(singerKey string) []*string {
-	var objectList []*string
+func getS3LogList(c *Config) *string {
+	var objectList *string
 
-	prefix := s3Path()
 	output, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
-		Bucket: aws.String(""),
-		Prefix: prefix,
+		Bucket: aws.String(c.S3Bucket),
+		Prefix: c.KeyPrefix,
 	})
 
 	if err != nil {
@@ -32,10 +31,11 @@ func getS3LogList(singerKey string) []*string {
 	}
 
 	for _, object := range output.Contents {
-		if *object.Key == singerKey {
-			objectList = append(objectList, object.Key)
+		if *object.Key == c.KeyName {
+			objectList = object.Key
 		}
 	}
+
 	return objectList
 }
 
@@ -121,14 +121,14 @@ func formatOjbect(strlog string) (*Alb, error) {
 
 }
 
-func GetS3Object(singerKey string) (snippetLog []*Alb) {
+func GetS3Object(c *Config) (snippetLog []*Alb) {
 
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion(""),
+		config.WithRegion(c.AwsRegion),
 		config.WithCredentialsProvider(credentials.StaticCredentialsProvider{
 			Value: aws.Credentials{
-				AccessKeyID:     "",
-				SecretAccessKey: "",
+				AccessKeyID:     c.AwsAccessKeyID,
+				SecretAccessKey: c.AwsSecretAccessKey,
 			},
 		}))
 
@@ -138,29 +138,27 @@ func GetS3Object(singerKey string) (snippetLog []*Alb) {
 
 	client = s3.NewFromConfig(cfg)
 
-	gzipString := getS3LogList(singerKey)
+	key := getS3LogList(c)
+	output, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(c.S3Bucket),
+		Key:    key,
+	})
 
-	for _, key := range gzipString {
-		output, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
-			Bucket: aws.String(""),
-			Key:    key})
+	if err != nil {
+		fmt.Println(err)
+	}
 
-		if err != nil {
-			fmt.Println(err)
-		}
+	snippets := unzipOutput(output)
 
-		snippets := unzipOutput(output)
+	for _, v := range snippets {
 
-		for _, v := range snippets {
-
-			if len(v) > 10 {
-				logMap, err := formatOjbect(v)
-				if err != nil {
-					continue
-				}
-
-				snippetLog = append(snippetLog, logMap)
+		if len(v) > 10 {
+			logMap, err := formatOjbect(v)
+			if err != nil {
+				continue
 			}
+
+			snippetLog = append(snippetLog, logMap)
 		}
 	}
 

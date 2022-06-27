@@ -35,12 +35,12 @@ func returnVersion(es *elasticsearch.Client) {
 	log.Println(strings.Repeat("~", 37))
 }
 
-func SendMessage(logSnippet []*Alb) {
+func SendMessage(c *Config, logSnippet []*Alb) {
 
 	cfg := elasticsearch.Config{
-		Addresses: []string{""},
-		Username:  "",
-		Password:  "",
+		Addresses: []string{c.ElkAddresses},
+		Username:  c.ElkUsername,
+		Password:  c.ElkPassword,
 	}
 
 	es, err := elasticsearch.NewClient(cfg)
@@ -55,16 +55,16 @@ func SendMessage(logSnippet []*Alb) {
 		jsonString, _ := json.Marshal(v)
 		body := strings.NewReader(string(jsonString))
 
-		insertIndex(es, body, num)
+		insertIndex(c, es, body, num)
 		num++
 	}
 
 }
 
-func insertIndex(es *elasticsearch.Client, body *strings.Reader, num int) {
+func insertIndex(c *Config, es *elasticsearch.Client, body *strings.Reader, num int) {
 
 	req := esapi.IndexRequest{
-		Index: "",
+		Index: c.ElkIndex,
 		// DocumentID: strconv.Itoa(num),
 		Body:    body,
 		Refresh: "true",
