@@ -3,157 +3,62 @@ package utils
 import (
 	"compress/gzip"
 	"context"
-	"fmt"
 	"io"
-	"log"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-var client *s3.Client
+type Storager struct {
+	C      *Config
+	Client *s3.Client
+	Key    *string
+}
 
-func getS3LogList(c *Config) *string {
-	var objectList *string
-
-	output, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
-		Bucket: aws.String(c.S3Bucket),
-		Prefix: c.KeyPrefix,
+func (s *Storager) ListObject() error {
+	output, err := s.Client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.C.S3Bucket),
+		Prefix: s.C.KeyPrefix,
 	})
 
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	for _, object := range output.Contents {
-		if *object.Key == c.KeyName {
-			objectList = object.Key
+		if *object.Key == s.C.KeyName {
+			s.Key = object.Key
 		}
 	}
 
-	return objectList
+	return nil
 }
 
-func formatOjbect(strlog string) (*Alb, error) {
-	strings.Replace(strlog, " ", "", -1)
-	strings.Replace(strlog, "\n", "", -1)
+func (s *Storager) GetObject() ([]*Alb, error) {
+	var snippetLog []*Alb
 
-	re := regexp.MustCompile(`([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*):([0-9]*) ([^ ]*)[:-]([0-9]*) ([-.0-9]*) ([-.0-9]*) ([-.0-9]*) (|[-0-9]*) (-|[-0-9]*) ([-0-9]*) ([-0-9]*) \"([^ ]*) (.*) (- |[^ ]*)\" \"([^\"]*)\" ([A-Z0-9-_]+) ([A-Za-z0-9.-]*) ([^ ]*) \"([^\"]*)\" \"([^\"]*)\" \"([^\"]*)\" ([-.0-9]*) ([^ ]*) \"([^\"]*)\" \"([^\"]*)\" \"([^ ]*)\" \"([^\s]+?)\" \"([^\s]+)\" \"([^ ]*)\" \"([^ ]*)\"`)
-
-	s := re.FindAllStringSubmatch(strlog, -1)
-
-	client_port, err := strconv.Atoi(s[0][5])
-	if err != nil {
-		return &Alb{}, err
-	}
-
-	target_port, err := strconv.Atoi(s[0][7])
-	if err != nil {
-		return &Alb{}, err
-	}
-	request_processing_time, err := strconv.ParseFloat(s[0][8], 64)
-	if err != nil {
-		return &Alb{}, err
-	}
-	target_processing_time, err := strconv.ParseFloat(s[0][9], 64)
-	if err != nil {
-		return &Alb{}, err
-	}
-	response_processing_time, err := strconv.ParseFloat(s[0][10], 64)
-	if err != nil {
-		return &Alb{}, err
-	}
-	elb_status_code, err := strconv.Atoi(s[0][11])
-	if err != nil {
-		return &Alb{}, err
-	}
-	received_bytes, err := strconv.Atoi(s[0][13])
-	if err != nil {
-		return &Alb{}, err
-	}
-	sent_bytes, err := strconv.Atoi(s[0][14])
-	if err != nil {
-		return &Alb{}, err
-	}
-
-	logMap := &Alb{
-		s[0][1],
-		s[0][2],
-		s[0][3],
-		s[0][4],
-		client_port,
-		s[0][6],
-		target_port,
-		request_processing_time,
-		target_processing_time,
-		response_processing_time,
-		elb_status_code,
-		s[0][12],
-		received_bytes,
-		sent_bytes,
-		s[0][15],
-		s[0][16],
-		s[0][17],
-		s[0][18],
-		s[0][19],
-		s[0][20],
-		s[0][21],
-		s[0][22],
-		s[0][23],
-		s[0][24],
-		s[0][25],
-		s[0][26],
-		s[0][27],
-		s[0][28],
-		s[0][29],
-		s[0][30],
-		s[0][31],
-		s[0][32],
-		s[0][33],
-	}
-
-	return logMap, nil
-
-}
-
-func GetS3Object(c *Config) (snippetLog []*Alb) {
-
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithRegion(c.AwsRegion),
-		config.WithCredentialsProvider(credentials.StaticCredentialsProvider{
-			Value: aws.Credentials{
-				AccessKeyID:     c.AwsAccessKeyID,
-				SecretAccessKey: c.AwsSecretAccessKey,
-			},
-		}))
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	client = s3.NewFromConfig(cfg)
-
-	key := getS3LogList(c)
-	output, err := client.GetObject(context.TODO(), &s3.GetObjectInput{
-		Bucket: aws.String(c.S3Bucket),
-		Key:    key,
+	output, err := s.Client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(s.C.S3Bucket),
+		Key:    s.Key,
 	})
 
 	if err != nil {
-		fmt.Println(err)
+		return nil, err
 	}
 
-	snippets := unzipOutput(output)
+	snippets, err := s.unzipGz(output)
+
+	if err != nil {
+		return nil, err
+	}
 
 	for _, v := range snippets {
 
 		if len(v) > 10 {
-			logMap, err := formatOjbect(v)
+			logMap, err := s.formatAlb(v)
 			if err != nil {
 				continue
 			}
@@ -162,28 +67,111 @@ func GetS3Object(c *Config) (snippetLog []*Alb) {
 		}
 	}
 
-	return
+	return snippetLog, nil
 }
 
-func unzipOutput(output *s3.GetObjectOutput) []string {
+func (s *Storager) unzipGz(output *s3.GetObjectOutput) ([]string, error) {
 
 	zr, err := gzip.NewReader(output.Body)
 
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	b, err := io.ReadAll(zr)
 
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	snippets := strings.Split(string(b), "\n")
 
-	if err := zr.Close(); err != nil {
-		log.Fatal(err)
+	err = zr.Close()
+	if err != nil {
+		return nil, err
 	}
 
-	return snippets
+	return snippets, nil
+}
+
+func (s *Storager) formatAlb(strlog string) (*Alb, error) {
+	strings.Replace(strlog, " ", "", -1)
+	strings.Replace(strlog, "\n", "", -1)
+
+	re := regexp.MustCompile(`([^ ]*) ([^ ]*) ([^ ]*) ([^ ]*):([0-9]*) ([^ ]*)[:-]([0-9]*) ([-.0-9]*) ([-.0-9]*) ([-.0-9]*) (|[-0-9]*) (-|[-0-9]*) ([-0-9]*) ([-0-9]*) \"([^ ]*) (.*) (- |[^ ]*)\" \"([^\"]*)\" ([A-Z0-9-_]+) ([A-Za-z0-9.-]*) ([^ ]*) \"([^\"]*)\" \"([^\"]*)\" \"([^\"]*)\" ([-.0-9]*) ([^ ]*) \"([^\"]*)\" \"([^\"]*)\" \"([^ ]*)\" \"([^\s]+?)\" \"([^\s]+)\" \"([^ ]*)\" \"([^ ]*)\"`)
+
+	ss := re.FindAllStringSubmatch(strlog, -1)
+
+	client_port, err := strconv.Atoi(ss[0][5])
+	if err != nil {
+		return &Alb{}, err
+	}
+
+	target_port, err := strconv.Atoi(ss[0][7])
+	if err != nil {
+		return &Alb{}, err
+	}
+	request_processing_time, err := strconv.ParseFloat(ss[0][8], 64)
+	if err != nil {
+		return &Alb{}, err
+	}
+	target_processing_time, err := strconv.ParseFloat(ss[0][9], 64)
+	if err != nil {
+		return &Alb{}, err
+	}
+	response_processing_time, err := strconv.ParseFloat(ss[0][10], 64)
+	if err != nil {
+		return &Alb{}, err
+	}
+	elb_status_code, err := strconv.Atoi(ss[0][11])
+	if err != nil {
+		return &Alb{}, err
+	}
+	received_bytes, err := strconv.Atoi(ss[0][13])
+	if err != nil {
+		return &Alb{}, err
+	}
+	sent_bytes, err := strconv.Atoi(ss[0][14])
+	if err != nil {
+		return &Alb{}, err
+	}
+
+	logMap := &Alb{
+		ss[0][1],
+		ss[0][2],
+		ss[0][3],
+		ss[0][4],
+		client_port,
+		ss[0][6],
+		target_port,
+		request_processing_time,
+		target_processing_time,
+		response_processing_time,
+		elb_status_code,
+		ss[0][12],
+		received_bytes,
+		sent_bytes,
+		ss[0][15],
+		ss[0][16],
+		ss[0][17],
+		ss[0][18],
+		ss[0][19],
+		ss[0][20],
+		ss[0][21],
+		ss[0][22],
+		ss[0][23],
+		ss[0][24],
+		ss[0][25],
+		ss[0][26],
+		ss[0][27],
+		ss[0][28],
+		ss[0][29],
+		ss[0][30],
+		ss[0][31],
+		ss[0][32],
+		ss[0][33],
+	}
+
+	return logMap, nil
+
 }

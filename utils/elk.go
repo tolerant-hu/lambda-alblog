@@ -3,79 +3,37 @@ package utils
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log"
 	"strings"
 
 	"github.com/elastic/go-elasticsearch/esapi"
 	"github.com/elastic/go-elasticsearch/v7"
 )
 
-func returnVersion(es *elasticsearch.Client) {
-	var (
-		r map[string]interface{}
-	)
-
-	res, err := es.Info()
-	if err != nil {
-		log.Fatalf("Error getting response: %s", err)
-	}
-
-	defer res.Body.Close()
-
-	if res.IsError() {
-		log.Fatalf("Error: %s", res.String())
-	}
-
-	if err := json.NewDecoder(res.Body).Decode(&r); err != nil {
-		log.Fatalf("Error parsing the response body: %s", err)
-	}
-
-	log.Printf("Server: %s", r["version"].(map[string]interface{})["number"])
-	log.Println(strings.Repeat("~", 37))
+type Elasticer struct {
+	C  *Config
+	Es *elasticsearch.Client
 }
 
-func SendMessage(c *Config, logSnippet []*Alb) {
+func (e *Elasticer) SyncIndex(logSnippet []*Alb) error {
 
-	cfg := elasticsearch.Config{
-		Addresses: []string{c.ElkAddresses},
-		Username:  c.ElkUsername,
-		Password:  c.ElkPassword,
-	}
-
-	es, err := elasticsearch.NewClient(cfg)
-
-	if err != nil {
-		log.Fatalf("Error creating the client: %s", err)
-	}
-
-	// returnVersion(es)
-	num := 1
 	for _, v := range logSnippet {
 		jsonString, _ := json.Marshal(v)
 		body := strings.NewReader(string(jsonString))
 
-		insertIndex(c, es, body, num)
-		num++
+		req := esapi.IndexRequest{
+			Index:   e.C.ElkIndex,
+			Body:    body,
+			Refresh: "true",
+		}
+
+		res, err := req.Do(context.Background(), e.Es)
+		if err != nil {
+			return err
+		}
+
+		defer res.Body.Close()
 	}
 
-}
+	return nil
 
-func insertIndex(c *Config, es *elasticsearch.Client, body *strings.Reader, num int) {
-
-	req := esapi.IndexRequest{
-		Index: c.ElkIndex,
-		// DocumentID: strconv.Itoa(num),
-		Body:    body,
-		Refresh: "true",
-	}
-
-	res, err := req.Do(context.Background(), es)
-	if err != nil {
-		log.Fatalf("Error getting response: %s", err)
-	}
-
-	defer res.Body.Close()
-
-	fmt.Println(res.String())
 }
